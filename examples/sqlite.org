@@ -1,0 +1,145 @@
+#+TITLE: datamacs: SQLite example
+
+Load datamacs first: =M-x load-library RET datamacs=.
+
+Run a block with =C-c C-c= inside it.  Run them from top to bottom.
+
+* Setup
+
+Creates =example.db= next to this file, with =people=, =products=
+and =orders= tables.  Run it again to reset the data.
+
+#+begin_src emacs-lisp :results silent
+(let ((db (sqlite-open (expand-file-name "example.db"))))
+  (dolist (table '("orders" "products" "people"))
+    (sqlite-execute db (format "DROP TABLE IF EXISTS %s" table)))
+  (sqlite-execute db "CREATE TABLE people (
+                        id    INTEGER PRIMARY KEY,
+                        name  TEXT NOT NULL,
+                        email TEXT UNIQUE,
+                        city  TEXT,
+                        age   INTEGER)")
+  (sqlite-execute db "CREATE TABLE products (
+                        id       INTEGER PRIMARY KEY,
+                        name     TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        price    REAL NOT NULL)")
+  (sqlite-execute db "CREATE TABLE orders (
+                        id         INTEGER PRIMARY KEY,
+                        person_id  INTEGER NOT NULL REFERENCES people (id),
+                        product_id INTEGER NOT NULL REFERENCES products (id),
+                        quantity   INTEGER NOT NULL,
+                        ordered_at TEXT NOT NULL)")
+  (sqlite-execute db "INSERT INTO people (name, email, city, age) VALUES
+                        ('Ali',     'ali@example.com',     'Tashkent',  31),
+                        ('Vali',    'vali@example.com',    'Samarkand', 27),
+                        ('Gani',    'gani@example.com',    'Tashkent',  45),
+                        ('Lola',    'lola@example.com',    NULL,        22),
+                        ('Dilnoza', 'dilnoza@example.com', 'Bukhara',   29),
+                        ('Bekzod',  'bekzod@example.com',  'Namangan',  38),
+                        ('Malika',  'malika@example.com',  'Tashkent',  24),
+                        ('Sardor',  NULL,                  'Andijan',   52),
+                        ('Nodira',  'nodira@example.com',  'Samarkand', 33),
+                        ('Jasur',   'jasur@example.com',   'Fergana',   41),
+                        ('Kamola',  'kamola@example.com',  'Tashkent',  19),
+                        ('Otabek',  'otabek@example.com',  'Khiva',     36)")
+  (sqlite-execute db "INSERT INTO products (name, category, price) VALUES
+                        ('Laptop',      'Electronics', 1200.00),
+                        ('Phone',       'Electronics',  650.00),
+                        ('Headphones',  'Electronics',   85.50),
+                        ('Desk',        'Furniture',    240.00),
+                        ('Chair',       'Furniture',    130.00),
+                        ('Lamp',        'Furniture',     35.90),
+                        ('Notebook',    'Stationery',     3.20),
+                        ('Pen set',     'Stationery',    12.75),
+                        ('Backpack',    'Accessories',   59.99),
+                        ('Water bottle','Accessories',   15.00)")
+  (sqlite-execute db "INSERT INTO orders (person_id, product_id, quantity, ordered_at) VALUES
+                        (1, 1, 1, '2026-09-02'), (1, 7, 5, '2026-09-02'),
+                        (2, 2, 1, '2026-09-05'), (3, 4, 1, '2026-09-11'),
+                        (3, 5, 2, '2026-09-11'), (5, 3, 1, '2026-09-18'),
+                        (6, 1, 1, '2026-09-21'), (6, 9, 1, '2026-09-21'),
+                        (7, 8, 3, '2026-10-01'), (7, 7, 10, '2026-10-01'),
+                        (8, 6, 2, '2026-10-04'), (9, 2, 1, '2026-10-09'),
+                        (9, 10, 2, '2026-10-09'), (10, 5, 4, '2026-10-15'),
+                        (10, 4, 2, '2026-10-15'), (11, 3, 1, '2026-10-22'),
+                        (12, 9, 1, '2026-10-30'), (1, 10, 1, '2026-11-03'),
+                        (3, 1, 1, '2026-11-07'), (5, 8, 2, '2026-11-12')")
+  (sqlite-close db))
+#+end_src
+
+* Read
+
+#+begin_src datamacs :driver sqlite :file example.db
+SELECT * FROM people
+#+end_src
+
+#+begin_src datamacs :driver sqlite :file example.db
+SELECT p.name, pr.name AS product, o.quantity,
+       round(o.quantity * pr.price, 2) AS total, o.ordered_at
+FROM orders o
+JOIN people p ON p.id = o.person_id
+JOIN products pr ON pr.id = o.product_id
+ORDER BY o.ordered_at DESC
+LIMIT 10
+#+end_src
+
+#+begin_src datamacs :driver sqlite :file example.db
+SELECT p.name, count(o.id) AS orders,
+       round(coalesce(sum(o.quantity * pr.price), 0), 2) AS spent
+FROM people p
+LEFT JOIN orders o ON o.person_id = p.id
+LEFT JOIN products pr ON pr.id = o.product_id
+GROUP BY p.id
+ORDER BY spent DESC
+#+end_src
+
+#+begin_src datamacs :driver sqlite :file example.db
+SELECT pr.category, sum(o.quantity) AS items,
+       round(sum(o.quantity * pr.price), 2) AS revenue
+FROM orders o
+JOIN products pr ON pr.id = o.product_id
+GROUP BY pr.category
+ORDER BY revenue DESC
+#+end_src
+
+#+begin_src datamacs :driver sqlite :file example.db
+SELECT city, count(*) AS people, avg(age) AS avg_age
+FROM people
+GROUP BY city
+ORDER BY people DESC
+#+end_src
+
+* Write
+
+#+begin_src datamacs :driver sqlite :file example.db
+INSERT INTO people (name, city, age) VALUES ('Zarina', 'Bukhara', 35)
+#+end_src
+
+#+begin_src datamacs :driver sqlite :file example.db
+UPDATE people SET age = age + 1 WHERE city = 'Tashkent'
+#+end_src
+
+* Read-only
+
+Writes are refused on a =:readonly t= connection.
+
+#+begin_src datamacs :driver sqlite :file example.db :readonly t
+DELETE FROM people
+#+end_src
+
+Reads still work.
+
+#+begin_src datamacs :driver sqlite :file example.db :readonly t
+SELECT name, age FROM people WHERE age > 30
+#+end_src
+
+* Errors
+
+#+begin_src datamacs :driver sqlite :file example.db
+INSERT INTO people (id, name) VALUES (1, 'Duplicate')
+#+end_src
+
+#+begin_src datamacs :driver sqlite :file example.db
+SELECT * FROM missing_table
+#+end_src

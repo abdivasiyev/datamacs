@@ -26,6 +26,7 @@
 
 (require 'datamacs-core)
 (require 'datamacs-sqlite)
+(require 'ob-datamacs)
 
 (provide 'datamacs)
 ;;; datamacs.el ends here

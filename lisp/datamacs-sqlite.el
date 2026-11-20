@@ -49,12 +49,20 @@
   (let ((handle (datamacs-conn-handle conn)))
     (unless handle
       (user-error "Connection %s is closed" (datamacs-conn-name conn)))
-    (let* ((before (datamacs-sqlite--total-changes handle))
-           (result (sqlite-select handle query nil 'full)))
-      (if (car result)
-          (datamacs-table-result-create :columns (car result) :rows (cdr result))
+    (if-let* ((columns (datamacs-sqlite--columns handle query)))
+        (datamacs-table-result-create
+         :columns columns :rows (sqlite-select handle query))
+      ;; `sqlite-select' ignores write errors, so writes use `sqlite-execute'.
+      (let ((before (datamacs-sqlite--total-changes handle)))
+        (sqlite-execute handle query)
         (datamacs-affected-result-create
          :count (- (datamacs-sqlite--total-changes handle) before))))))
+
+(defun datamacs-sqlite--columns (handle query)
+  "Return the column names of QUERY on HANDLE without running it."
+  (let ((stmt (sqlite-select handle query nil 'set)))
+    (prog1 (sqlite-columns stmt)
+      (sqlite-finalize stmt))))
 
 (defun datamacs-sqlite--total-changes (handle)
   "Return the number of rows changed so far on HANDLE."
