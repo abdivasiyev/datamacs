@@ -6,7 +6,8 @@
 
 ;;; Commentary:
 
-;; Shows query results in a read-only side window.  Press RET or click
+;; Shows each query result in its own read-only window at the bottom
+;; of the frame, so results can be compared.  Press RET or click
 ;; on a cell to change its value.  With C-u, the value is set to NULL.
 ;; Press g to run the query again.  It always runs read-only, so a
 ;; query that writes, like UPDATE ... RETURNING, fails instead.
@@ -36,9 +37,38 @@
   (setq truncate-lines t)
   (setq-local revert-buffer-function #'datamacs-result--refresh))
 
+(defun datamacs-result--buffers ()
+  "Return all result buffers, sorted by name."
+  (sort (seq-filter (lambda (b)
+                      (eq (buffer-local-value 'major-mode b) 'datamacs-result-mode))
+                    (buffer-list))
+        (lambda (a b) (string< (buffer-name a) (buffer-name b)))))
+
+(defun datamacs-result--buffer (spec query)
+  "Return the result buffer for QUERY on the SPEC connection."
+  (or (seq-find (lambda (b)
+                  (with-current-buffer b
+                    (and (equal datamacs-result--spec spec)
+                         (equal datamacs-result--query query))))
+                (datamacs-result--buffers))
+      (generate-new-buffer
+       (format "*datamacs: %s*"
+               (truncate-string-to-width
+                (replace-regexp-in-string "[ \t\n]+" " " query) 40 nil nil "…")))))
+
+(defun datamacs-result--next-slot ()
+  "Return a side window slot right of all shown results."
+  (let ((slots (delq nil (mapcar (lambda (w)
+                                   (with-current-buffer (window-buffer w)
+                                     (and (derived-mode-p 'datamacs-result-mode)
+                                          (window-parameter w 'window-slot))))
+                                 (window-list)))))
+    (if slots (1+ (apply #'max slots)) 0)))
+
 (defun datamacs-result-show (result spec query)
   "Show RESULT of QUERY on the SPEC connection in a side window."
-  (let ((buffer (get-buffer-create "*datamacs*")))
+  (let* ((query (string-trim query))
+         (buffer (datamacs-result--buffer spec query)))
     (with-current-buffer buffer
       (datamacs-result-mode)
       (setq datamacs-result--result result
@@ -46,8 +76,10 @@
             datamacs-result--query query)
       (goto-char (point-min))
       (datamacs-result--redisplay))
-    (display-buffer buffer '(display-buffer-in-side-window
+    (display-buffer buffer `((display-buffer-reuse-window
+                              display-buffer-in-side-window)
                              (side . bottom)
+                             (slot . ,(datamacs-result--next-slot))
                              (window-height . 0.3)))
     (datamacs-result--summary result)))
 
