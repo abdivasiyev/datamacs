@@ -44,5 +44,21 @@
   (setf (datamacs-conn-handle conn) nil
         (datamacs-conn-status conn) 'closed))
 
+(cl-defmethod datamacs-driver-execute ((conn datamacs-sqlite-conn) query)
+  "Run QUERY on the SQLite connection CONN."
+  (let ((handle (datamacs-conn-handle conn)))
+    (unless handle
+      (user-error "Connection %s is closed" (datamacs-conn-name conn)))
+    (let* ((before (datamacs-sqlite--total-changes handle))
+           (result (sqlite-select handle query nil 'full)))
+      (if (car result)
+          (datamacs-table-result-create :columns (car result) :rows (cdr result))
+        (datamacs-affected-result-create
+         :count (- (datamacs-sqlite--total-changes handle) before))))))
+
+(defun datamacs-sqlite--total-changes (handle)
+  "Return the number of rows changed so far on HANDLE."
+  (caar (sqlite-select handle "SELECT total_changes()")))
+
 (provide 'datamacs-sqlite)
 ;;; datamacs-sqlite.el ends here

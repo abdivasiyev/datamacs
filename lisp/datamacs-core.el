@@ -37,6 +37,36 @@ Each element is a plist.  Every connection has its own :name and
   (readonly nil :documentation "Non-nil means only read queries are allowed.")
   (handle nil :documentation "The driver's native object."))
 
+;;; Results
+
+(cl-defstruct (datamacs-result (:constructor nil))
+  "Base type of all query results.")
+
+(cl-defstruct (datamacs-table-result
+               (:include datamacs-result)
+               (:constructor datamacs-table-result-create))
+  "Rows with named columns, as returned by SQL queries."
+  (columns nil :documentation "Column names.")
+  (rows nil :documentation "Rows, each a list of values."))
+
+(cl-defstruct (datamacs-documents-result
+               (:include datamacs-result)
+               (:constructor datamacs-documents-result-create))
+  "Documents, as returned by MongoDB."
+  (documents nil :documentation "List of documents, each an alist."))
+
+(cl-defstruct (datamacs-value-result
+               (:include datamacs-result)
+               (:constructor datamacs-value-result-create))
+  "A single value, as returned by Redis."
+  (value nil :documentation "String, number, list or nil."))
+
+(cl-defstruct (datamacs-affected-result
+               (:include datamacs-result)
+               (:constructor datamacs-affected-result-create))
+  "Number of changed rows or documents."
+  (count 0 :documentation "Number of changed rows."))
+
 ;;; Driver interface
 
 (cl-defgeneric datamacs-driver-open (driver spec)
@@ -44,6 +74,9 @@ Each element is a plist.  Every connection has its own :name and
 
 (cl-defgeneric datamacs-driver-close (conn)
   "Close CONN.")
+
+(cl-defgeneric datamacs-driver-execute (conn query)
+  "Run QUERY on CONN and return a `datamacs-result'.")
 
 (provide 'datamacs-core)
 ;;; datamacs-core.el ends here
