@@ -12,6 +12,7 @@
 
 (require 'cl-lib)
 (require 'sql)
+(require 'auth-source)
 
 (defgroup datamacs nil
   "Database client for Emacs."
@@ -97,6 +98,29 @@ where KEY is non-nil for primary key columns.")
   "Change COLUMN from OLD to NEW in the TABLE row matching KEY on CONN.
 KEY is an alist of primary key columns and values.  Return the
 number of changed rows.")
+
+(defun datamacs-call-with-password (spec fn)
+  "Call FN with the password of the SPEC connection and return its value.
+The password is SPEC's :password, or comes from auth-source, which
+asks for it when there is none.  A new password is offered for
+saving once FN succeeds, and forgotten if FN fails."
+  (if-let* ((password (plist-get spec :password)))
+      (funcall fn password)
+    (let* ((query (seq-mapcat
+                   (lambda (key)
+                     (when-let* ((value (plist-get spec key)))
+                       (list key (format "%s" value))))
+                   '(:host :port :user)))
+           (found (car (apply #'auth-source-search
+                              :max 1 :require '(:secret) :create t query)))
+           (secret (plist-get found :secret)))
+      (condition-case err
+          (prog1 (funcall fn (if (functionp secret) (funcall secret) secret))
+            (when-let* ((save (plist-get found :save-function)))
+              (funcall save)))
+        (error
+         (apply #'auth-source-forget+ query)
+         (signal (car err) (cdr err)))))))
 
 (defvar datamacs--sessions (make-hash-table :test #'equal)
   "Open session connections, keyed by their spec.")
