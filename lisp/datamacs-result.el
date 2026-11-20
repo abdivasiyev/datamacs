@@ -8,6 +8,8 @@
 
 ;; Shows query results in a read-only side window.  Press RET or click
 ;; on a cell to change its value.  With C-u, the value is set to NULL.
+;; Press g to run the query again.  It always runs read-only, so a
+;; query that writes, like UPDATE ... RETURNING, fails instead.
 
 ;;; Code:
 
@@ -21,6 +23,9 @@
 (defvar-local datamacs-result--spec nil
   "Spec of the connection the result came from.")
 
+(defvar-local datamacs-result--query nil
+  "Query that produced the result.")
+
 (defvar-keymap datamacs-result-mode-map
   :parent special-mode-map
   "RET" #'datamacs-result-edit-cell
@@ -28,25 +33,43 @@
 
 (define-derived-mode datamacs-result-mode special-mode "Datamacs-Result"
   "Read-only view of a query result."
-  (setq truncate-lines t))
+  (setq truncate-lines t)
+  (setq-local revert-buffer-function #'datamacs-result--refresh))
 
-(defun datamacs-result-show (result spec)
-  "Show RESULT of the SPEC connection in a side window."
+(defun datamacs-result-show (result spec query)
+  "Show RESULT of QUERY on the SPEC connection in a side window."
   (let ((buffer (get-buffer-create "*datamacs*")))
     (with-current-buffer buffer
       (datamacs-result-mode)
       (setq datamacs-result--result result
-            datamacs-result--spec spec)
+            datamacs-result--spec spec
+            datamacs-result--query query)
       (goto-char (point-min))
       (datamacs-result--redisplay))
     (display-buffer buffer '(display-buffer-in-side-window
                              (side . bottom)
                              (window-height . 0.3)))
-    (let ((value (datamacs-result-render result)))
-      (if (stringp value)
-          (message "%s" (car (split-string value "\n")))
-        (let ((n (length (or (cdr (memq 'hline value)) value))))
-          (message "%d row%s" n (if (= n 1) "" "s")))))))
+    (datamacs-result--summary result)))
+
+(defun datamacs-result--refresh (&rest _)
+  "Run the query again on a read-only connection and show the new result."
+  (unless (datamacs-table-result-p datamacs-result--result)
+    (user-error "Only query results can be refreshed"))
+  (let ((result (datamacs-call-with-connection
+                 (plist-put (copy-sequence datamacs-result--spec) :readonly t)
+                 (lambda (conn)
+                   (datamacs-driver-execute conn datamacs-result--query)))))
+    (setq datamacs-result--result result)
+    (datamacs-result--redisplay)
+    (datamacs-result--summary result)))
+
+(defun datamacs-result--summary (result)
+  "Show a one-line summary of RESULT in the echo area."
+  (let ((value (datamacs-result-render result)))
+    (if (stringp value)
+        (message "%s" (car (split-string value "\n")))
+      (let ((n (length (or (cdr (memq 'hline value)) value))))
+        (message "%d row%s" n (if (= n 1) "" "s"))))))
 
 (defun datamacs-result--redisplay ()
   "Draw the result again, keeping point on the same cell."

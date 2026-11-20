@@ -37,7 +37,7 @@
                   spec (lambda (conn) (datamacs-driver-execute conn body)))))
     (if (seq-some (lambda (p) (member p '("none" "silent")))
                   (alist-get :result-params params))
-        (progn (datamacs-result-show result spec) nil)
+        (progn (datamacs-result-show result spec body) nil)
       (datamacs-result-render result))))
 
 (provide 'ob-datamacs)

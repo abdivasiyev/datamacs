@@ -50,11 +50,12 @@
     (unless handle
       (user-error "Connection %s is closed" (datamacs-conn-name conn)))
     (if-let* ((columns (datamacs-sqlite--columns handle query)))
-        (let ((source (datamacs-sqlite--source handle query columns)))
+        ;; `sqlite-select' hides errors, so rows come from `sqlite-execute'.
+        (let ((source (datamacs-sqlite--source handle query columns))
+              (rows (sqlite-execute handle query)))
           (datamacs-table-result-create
-           :columns columns :rows (sqlite-select handle query)
+           :columns columns :rows (and (consp rows) rows)
            :table (car source) :key (cdr source)))
-      ;; `sqlite-select' ignores write errors, so writes use `sqlite-execute'.
       (let ((before (datamacs-sqlite--total-changes handle)))
         (sqlite-execute handle query)
         (datamacs-affected-result-create
