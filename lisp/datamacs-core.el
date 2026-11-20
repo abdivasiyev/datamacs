@@ -37,5 +37,13 @@ Each element is a plist.  Every connection has its own :name and
   (readonly nil :documentation "Non-nil means only read queries are allowed.")
   (handle nil :documentation "The driver's native object."))
 
+;;; Driver interface
+
+(cl-defgeneric datamacs-driver-open (driver spec)
+  "Open a DRIVER connection from SPEC.")
+
+(cl-defgeneric datamacs-driver-close (conn)
+  "Close CONN.")
+
 (provide 'datamacs-core)
 ;;; datamacs-core.el ends here
