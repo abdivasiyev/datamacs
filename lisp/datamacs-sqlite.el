@@ -68,6 +68,16 @@
     (prog1 (sqlite-columns stmt)
       (sqlite-finalize stmt))))
 
+(cl-defmethod datamacs-driver-in-transaction-p ((conn datamacs-sqlite-conn))
+  "Return non-nil if the SQLite connection CONN has an open transaction."
+  ;; SQLite refuses BEGIN inside a transaction.
+  (let ((handle (datamacs-conn-handle conn)))
+    (condition-case nil
+        (progn (sqlite-execute handle "BEGIN")
+               (sqlite-execute handle "ROLLBACK")
+               nil)
+      (sqlite-error t))))
+
 (cl-defmethod datamacs-driver-update-cell
   ((conn datamacs-sqlite-conn) table key column old new)
   "Change COLUMN from OLD to NEW in the TABLE row matching KEY on CONN."

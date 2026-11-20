@@ -148,3 +148,21 @@ INSERT INTO people (id, name) VALUES (1, 'Duplicate')
 #+begin_src datamacs
 SELECT * FROM missing_table
 #+end_src
+
+* Sessions
+
+Blocks with the same =:session= share one open connection, so a
+transaction can span several blocks.  =M-x datamacs-disconnect=
+closes all sessions.
+
+#+begin_src datamacs :session tx
+  BEGIN;
+
+  SELECT name, age FROM people;
+
+  UPDATE people SET age = 0;
+
+  SELECT name, age FROM people;
+
+  ROLLBACK;
+#+end_src

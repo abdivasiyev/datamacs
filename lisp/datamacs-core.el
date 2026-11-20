@@ -86,16 +86,62 @@ Each element is a plist.  Every connection has its own :name and
 Each table is (NAME TYPE COLUMNS) and each column is (NAME TYPE KEY),
 where KEY is non-nil for primary key columns.")
 
+(cl-defgeneric datamacs-driver-in-transaction-p (conn)
+  "Return non-nil if CONN has an open transaction.")
+
+(cl-defmethod datamacs-driver-in-transaction-p (_conn)
+  "Assume there is no open transaction."
+  nil)
+
 (cl-defgeneric datamacs-driver-update-cell (conn table key column old new)
   "Change COLUMN from OLD to NEW in the TABLE row matching KEY on CONN.
 KEY is an alist of primary key columns and values.  Return the
 number of changed rows.")
 
+(defvar datamacs--sessions (make-hash-table :test #'equal)
+  "Open session connections, keyed by their spec.")
+
 (defun datamacs-call-with-connection (spec fn)
-  "Open a connection from SPEC, call FN with it and close it."
-  (let ((conn (datamacs-driver-open (plist-get spec :driver) spec)))
-    (unwind-protect (funcall fn conn)
-      (datamacs-driver-close conn))))
+  "Call FN with a connection for SPEC.
+If SPEC has a :session, reuse its open connection.  Otherwise open
+a new connection and close it afterwards."
+  (if (plist-get spec :session)
+      (let ((conn (gethash spec datamacs--sessions)))
+        (unless (and conn (eq (datamacs-conn-status conn) 'open))
+          (setq conn (datamacs-driver-open (plist-get spec :driver) spec))
+          (puthash spec conn datamacs--sessions))
+        (funcall fn conn))
+    (let ((conn (datamacs-driver-open (plist-get spec :driver) spec)))
+      (unwind-protect (funcall fn conn)
+        (datamacs-driver-close conn)))))
+
+(defun datamacs-readonly-spec (spec)
+  "Return a copy of SPEC for a read-only connection without a session."
+  (plist-put (plist-put (copy-sequence spec) :session nil) :readonly t))
+
+(defun datamacs-disconnect ()
+  "Close all session connections."
+  (interactive)
+  (when (datamacs--confirm-sessions)
+    (let ((n (hash-table-count datamacs--sessions)))
+      (maphash (lambda (_spec conn) (datamacs-driver-close conn)) datamacs--sessions)
+      (clrhash datamacs--sessions)
+      (message "Closed %d session%s" n (if (= n 1) "" "s")))))
+
+(defun datamacs--confirm-sessions ()
+  "Ask before rolling back open session transactions.
+Return non-nil if there are none, or the user agrees."
+  (let (busy)
+    (maphash (lambda (spec conn)
+               (when (and (eq (datamacs-conn-status conn) 'open)
+                          (datamacs-driver-in-transaction-p conn))
+                 (push (plist-get spec :session) busy)))
+             datamacs--sessions)
+    (or (null busy)
+        (yes-or-no-p (format "Roll back open transactions in %s? "
+                             (string-join busy ", "))))))
+
+(add-hook 'kill-emacs-query-functions #'datamacs--confirm-sessions)
 
 (defun datamacs-sql-statement-at (text pos)
   "Return the SQL statement of TEXT at POS, counted from 0.

@@ -22,6 +22,9 @@
 ;;
 ;; C-c C-c runs the statement under the cursor, or the selected text.
 ;;
+;; Blocks with the same `:session NAME' share one open connection, so
+;; a transaction can span blocks.  M-x datamacs-disconnect closes them.
+;;
 ;; Results are shown in a read-only side window.  Add `:results replace'
 ;; to a block to write them into the Org file instead.
 
@@ -81,6 +84,9 @@ Header arguments override the `:conn' connection, except that
          (spec (copy-sequence conn)))
     (setq spec (plist-put spec :name (or name (alist-get :file params) "babel")))
     (setq spec (plist-put spec :driver (if (stringp driver) (intern driver) driver)))
+    (let ((session (alist-get :session params)))
+      (unless (member session '(nil "none"))
+        (setq spec (plist-put spec :session session))))
     (when-let* ((file (alist-get :file params)))
       (setq spec (plist-put spec :file (expand-file-name file))))
     (plist-put spec :readonly (or (plist-get conn :readonly)

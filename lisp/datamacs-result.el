@@ -88,7 +88,7 @@
   (unless (datamacs-table-result-p datamacs-result--result)
     (user-error "Only query results can be refreshed"))
   (let ((result (datamacs-call-with-connection
-                 (plist-put (copy-sequence datamacs-result--spec) :readonly t)
+                 (datamacs-readonly-spec datamacs-result--spec)
                  (lambda (conn)
                    (datamacs-driver-execute conn datamacs-result--query)))))
     (setq datamacs-result--result result)

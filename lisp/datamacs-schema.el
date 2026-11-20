@@ -35,7 +35,7 @@ Read it from the database if it is not cached or RELOAD is non-nil."
              (assoc-default key (multisession-value datamacs-schema-cache)))
         (let ((entry (cons (format-time-string "%Y-%m-%d %H:%M")
                            (datamacs-call-with-connection
-                            (plist-put (copy-sequence spec) :readonly t)
+                            (datamacs-readonly-spec spec)
                             #'datamacs-driver-schema))))
           (setf (multisession-value datamacs-schema-cache)
                 (cons (cons key entry)
