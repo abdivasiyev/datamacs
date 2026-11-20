@@ -49,6 +49,7 @@
   (let ((handle (datamacs-conn-handle conn)))
     (unless handle
       (user-error "Connection %s is closed" (datamacs-conn-name conn)))
+    (setq query (or (datamacs-sql-statement-at query 0) query))
     (if-let* ((columns (datamacs-sqlite--columns handle query)))
         ;; `sqlite-select' hides errors, so rows come from `sqlite-execute'.
         (let ((source (datamacs-sqlite--source handle query columns))

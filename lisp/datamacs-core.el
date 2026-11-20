@@ -11,6 +11,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'sql)
 
 (defgroup datamacs nil
   "Database client for Emacs."
@@ -90,6 +91,27 @@ number of changed rows.")
   (let ((conn (datamacs-driver-open (plist-get spec :driver) spec)))
     (unwind-protect (funcall fn conn)
       (datamacs-driver-close conn))))
+
+(defun datamacs-sql-statement-at (text pos)
+  "Return the SQL statement of TEXT at POS, counted from 0.
+Statements are separated by `;' outside strings and comments.  If
+POS is in an empty statement, return the one before it."
+  (with-temp-buffer
+    (set-syntax-table (make-syntax-table sql-mode-syntax-table))
+    (modify-syntax-entry ?\" "\"")
+    (insert text)
+    (goto-char (point-min))
+    (let ((start 0) prev)
+      (catch 'found
+        (while t
+          (let* ((end (if (search-forward ";" nil t) (1- (point)) (length text)))
+                 (stmt (string-trim (substring text start end) nil "[ \t\n\r;]+")))
+            (unless (and (< end (length text)) (nth 8 (syntax-ppss)))
+              (when (<= pos end)
+                (throw 'found (if (string-empty-p stmt) prev stmt)))
+              (unless (string-empty-p stmt)
+                (setq prev stmt))
+              (setq start end))))))))
 
 (provide 'datamacs-core)
 ;;; datamacs-core.el ends here

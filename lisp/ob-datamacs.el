@@ -20,12 +20,15 @@
 ;;
 ;;   #+PROPERTY: header-args:datamacs :conn notes
 ;;
+;; C-c C-c runs the statement under the cursor, or the selected text.
+;;
 ;; Results are shown in a read-only side window.  Add `:results replace'
 ;; to a block to write them into the Org file instead.
 
 ;;; Code:
 
 (require 'ob)
+(require 'org-element)
 (require 'datamacs-core)
 (require 'datamacs-result)
 
@@ -36,13 +39,33 @@
 
 (defun org-babel-execute:datamacs (body params)
   "Run BODY with Babel PARAMS and return the result for Org."
-  (let* ((spec (datamacs-babel--spec params))
+  (let* ((body (or (datamacs-babel--query) body))
+         (spec (datamacs-babel--spec params))
          (result (datamacs-call-with-connection
                   spec (lambda (conn) (datamacs-driver-execute conn body)))))
     (if (seq-some (lambda (p) (member p '("none" "silent")))
                   (alist-get :result-params params))
         (progn (datamacs-result-show result spec body) nil)
       (datamacs-result-render result))))
+
+(defun datamacs-babel--query ()
+  "Return the selected text or the statement at point in the block body.
+Return nil if point is outside the body."
+  (let ((block (org-element-at-point)))
+    (when (eq (org-element-type block) 'src-block)
+      (let ((beg (save-excursion
+                   (goto-char (org-element-property :post-affiliated block))
+                   (line-beginning-position 2)))
+            (end (save-excursion
+                   (goto-char (org-element-property :end block))
+                   (skip-chars-backward " \t\n")
+                   (line-beginning-position))))
+        (cond ((and (use-region-p)
+                    (<= beg (region-beginning)) (<= (region-end) end))
+               (buffer-substring-no-properties (region-beginning) (region-end)))
+              ((<= beg (point) end)
+               (datamacs-sql-statement-at
+                (buffer-substring-no-properties beg end) (- (point) beg))))))))
 
 (defun datamacs-babel--spec (params)
   "Build a connection spec from Babel PARAMS.
