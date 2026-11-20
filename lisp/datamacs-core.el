@@ -47,7 +47,9 @@ Each element is a plist.  Every connection has its own :name and
                (:constructor datamacs-table-result-create))
   "Rows with named columns, as returned by SQL queries."
   (columns nil :documentation "Column names.")
-  (rows nil :documentation "Rows, each a list of values."))
+  (rows nil :documentation "Rows, each a list of values.")
+  (table nil :documentation "Table the rows come from, or nil if not editable.")
+  (key nil :documentation "Primary key columns of the table."))
 
 (cl-defstruct (datamacs-documents-result
                (:include datamacs-result)
@@ -77,6 +79,17 @@ Each element is a plist.  Every connection has its own :name and
 
 (cl-defgeneric datamacs-driver-execute (conn query)
   "Run QUERY on CONN and return a `datamacs-result'.")
+
+(cl-defgeneric datamacs-driver-update-cell (conn table key column old new)
+  "Change COLUMN from OLD to NEW in the TABLE row matching KEY on CONN.
+KEY is an alist of primary key columns and values.  Return the
+number of changed rows.")
+
+(defun datamacs-call-with-connection (spec fn)
+  "Open a connection from SPEC, call FN with it and close it."
+  (let ((conn (datamacs-driver-open (plist-get spec :driver) spec)))
+    (unwind-protect (funcall fn conn)
+      (datamacs-driver-close conn))))
 
 (provide 'datamacs-core)
 ;;; datamacs-core.el ends here

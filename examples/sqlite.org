@@ -70,6 +70,10 @@ and =orders= tables.  Run it again to reset the data.
 
 * Read
 
+Press =RET= or click on a cell in the results window to change it.
+=C-u RET= sets it to NULL.  Only results of one table with its
+primary key can be edited, like the first query here.
+
 #+begin_src datamacs :driver sqlite :file example.db
 SELECT * FROM people
 #+end_src

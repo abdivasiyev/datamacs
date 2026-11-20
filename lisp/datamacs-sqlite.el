@@ -50,8 +50,10 @@
     (unless handle
       (user-error "Connection %s is closed" (datamacs-conn-name conn)))
     (if-let* ((columns (datamacs-sqlite--columns handle query)))
-        (datamacs-table-result-create
-         :columns columns :rows (sqlite-select handle query))
+        (let ((source (datamacs-sqlite--source handle query columns)))
+          (datamacs-table-result-create
+           :columns columns :rows (sqlite-select handle query)
+           :table (car source) :key (cdr source)))
       ;; `sqlite-select' ignores write errors, so writes use `sqlite-execute'.
       (let ((before (datamacs-sqlite--total-changes handle)))
         (sqlite-execute handle query)
@@ -63,6 +65,39 @@
   (let ((stmt (sqlite-select handle query nil 'set)))
     (prog1 (sqlite-columns stmt)
       (sqlite-finalize stmt))))
+
+(cl-defmethod datamacs-driver-update-cell
+  ((conn datamacs-sqlite-conn) table key column old new)
+  "Change COLUMN from OLD to NEW in the TABLE row matching KEY on CONN."
+  (let ((q #'datamacs-sqlite--quote))
+    (sqlite-execute
+     (datamacs-conn-handle conn)
+     (format "UPDATE %s SET %s = ? WHERE %s AND %s IS ?"
+             (funcall q table) (funcall q column)
+             (mapconcat (lambda (k) (concat (funcall q (car k)) " IS ?"))
+                        key " AND ")
+             (funcall q column))
+     (append (list new) (mapcar #'cdr key) (list old)))))
+
+(defun datamacs-sqlite--source (handle query columns)
+  "Return (TABLE . KEY) if rows of QUERY on HANDLE can be edited.
+Only a plain SELECT from one table whose COLUMNS include the
+primary key qualifies."
+  (let ((case-fold-search t)
+        (sql (string-trim (replace-regexp-in-string "[ \t\n]+" " " query))))
+    (when (and (string-match "\\`select .+? from \\([[:alnum:]_]+\\)\\(?: \\(?:where\\|order\\|limit\\) .*\\)?;?\\'" sql)
+               (not (string-match-p "\\_<\\(?:join\\|group\\|having\\|union\\|intersect\\|except\\|distinct\\)\\_>" sql)))
+      (let* ((table (match-string 1 sql))
+             (info (sqlite-select handle (format "PRAGMA table_info(%s)"
+                                                 (datamacs-sqlite--quote table))))
+             (key (mapcar #'cadr (sort (seq-filter (lambda (c) (> (nth 5 c) 0)) info)
+                                       (lambda (a b) (< (nth 5 a) (nth 5 b)))))))
+        (when (and key (seq-every-p (lambda (k) (member k columns)) key))
+          (cons table key))))))
+
+(defun datamacs-sqlite--quote (name)
+  "Quote NAME as an SQL identifier."
+  (concat "\"" (string-replace "\"" "\"\"" name) "\""))
 
 (defun datamacs-sqlite--total-changes (handle)
   "Return the number of rows changed so far on HANDLE."
