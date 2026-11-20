@@ -81,6 +81,11 @@ Each element is a plist.  Every connection has its own :name and
 (cl-defgeneric datamacs-driver-execute (conn query)
   "Run QUERY on CONN and return a `datamacs-result'.")
 
+(cl-defgeneric datamacs-driver-schema (conn)
+  "Return the schema of CONN as a list of (SCHEMA . TABLES).
+Each table is (NAME TYPE COLUMNS) and each column is (NAME TYPE KEY),
+where KEY is non-nil for primary key columns.")
+
 (cl-defgeneric datamacs-driver-update-cell (conn table key column old new)
   "Change COLUMN from OLD to NEW in the TABLE row matching KEY on CONN.
 KEY is an alist of primary key columns and values.  Return the

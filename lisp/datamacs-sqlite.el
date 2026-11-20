@@ -81,6 +81,27 @@
              (funcall q column))
      (append (list new) (mapcar #'cdr key) (list old)))))
 
+(cl-defmethod datamacs-driver-schema ((conn datamacs-sqlite-conn))
+  "Return the schema of the SQLite connection CONN."
+  (let ((handle (datamacs-conn-handle conn)))
+    (mapcar
+     (lambda (db)
+       (let ((schema (datamacs-sqlite--quote (nth 1 db))))
+         (cons (nth 1 db)
+               (mapcar
+                (lambda (table)
+                  (list (nth 0 table) (nth 1 table)
+                        (mapcar (lambda (c) (list (nth 1 c) (nth 2 c) (> (nth 5 c) 0)))
+                                (sqlite-select
+                                 handle (format "PRAGMA %s.table_info(%s)" schema
+                                                (datamacs-sqlite--quote (nth 0 table)))))))
+                (sqlite-select
+                 handle (format "SELECT name, type FROM %s.sqlite_master
+WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%%'
+ORDER BY name" schema))))))
+     (seq-remove (lambda (db) (equal (nth 1 db) "temp"))
+                 (sqlite-select handle "PRAGMA database_list")))))
+
 (defun datamacs-sqlite--source (handle query columns)
   "Return (TABLE . KEY) if rows of QUERY on HANDLE can be edited.
 Only a plain SELECT from one table whose COLUMNS include the

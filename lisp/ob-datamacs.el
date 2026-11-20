@@ -79,10 +79,10 @@ Header arguments override the `:conn' connection, except that
          (driver (or (alist-get :driver params) (plist-get conn :driver)
                      (user-error "Missing :conn or :driver header argument")))
          (spec (copy-sequence conn)))
-    (setq spec (plist-put spec :name (or name "babel")))
+    (setq spec (plist-put spec :name (or name (alist-get :file params) "babel")))
     (setq spec (plist-put spec :driver (if (stringp driver) (intern driver) driver)))
     (when-let* ((file (alist-get :file params)))
-      (setq spec (plist-put spec :file file)))
+      (setq spec (plist-put spec :file (expand-file-name file))))
     (plist-put spec :readonly (or (plist-get conn :readonly)
                                   (equal (alist-get :readonly params) "t")))))
 

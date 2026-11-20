@@ -28,6 +28,7 @@
 (require 'datamacs-sqlite)
 (require 'datamacs-result)
 (require 'ob-datamacs)
+(require 'datamacs-schema)
 
 (provide 'datamacs)
 ;;; datamacs.el ends here
