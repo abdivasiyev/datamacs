@@ -69,14 +69,27 @@ With :sslmode `prefer', fall back to a plain connection if TLS fails."
          (sslmode (format "%s" (or (plist-get spec :sslmode) "prefer")))
          (connect (lambda (tls)
                     (let ((pg-disable-type-coercion t)
-                          (pg-connect-timeout datamacs-connect-timeout))
-                      (pg-connect-plist (or (plist-get spec :database) user) user
-                                        :password password
-                                        :host (or (plist-get spec :host) "localhost")
-                                        :port (if (stringp port)
-                                                  (string-to-number port)
-                                                (or port 5432))
-                                        :tls-options tls)))))
+                          (pg-connect-timeout datamacs-connect-timeout)
+                          (before (append (process-list) (buffer-list))))
+                      (condition-case err
+                          (pg-connect-plist (or (plist-get spec :database) user) user
+                                            :password password
+                                            :host (or (plist-get spec :host) "localhost")
+                                            :port (if (stringp port)
+                                                      (string-to-number port)
+                                                    (or port 5432))
+                                            :tls-options tls)
+                        (error
+                         ;; pg may leave its process and buffer behind on failure.
+                         (dolist (proc (process-list))
+                           (unless (memq proc before)
+                             (delete-process proc)))
+                         (dolist (buffer (buffer-list))
+                           (unless (or (memq buffer before)
+                                       (not (string-prefix-p " *PostgreSQL*"
+                                                             (buffer-name buffer))))
+                             (kill-buffer buffer)))
+                         (signal (car err) (cdr err))))))))
     (pcase sslmode
       ("disable" (funcall connect nil))
       ("require" (funcall connect t))
@@ -297,7 +310,16 @@ ORDER BY 1, 2, 3"))
 
 (cl-defmethod datamacs-driver-in-transaction-p ((conn datamacs-postgres-conn))
   "Return non-nil if the PostgreSQL connection CONN has an open transaction."
-  (memq (pgcon-transaction-status (datamacs-conn-handle conn)) '(?T ?E)))
+  (let ((handle (datamacs-conn-handle conn)))
+    (if (fboundp 'pgcon-transaction-status)
+        (memq (pgcon-transaction-status handle) '(?T ?E))
+      ;; Older pg versions do not keep the status.  Inside a transaction
+      ;; now() is its start time, and a failed one refuses queries.
+      (condition-case nil
+          (let ((pg-disable-type-coercion t))
+            (equal "f" (caar (pg-result (pg-exec handle "SELECT now() = statement_timestamp()")
+                                        :tuples))))
+        (error t)))))
 
 (defun datamacs-postgres--error (err)
   "Signal ERR from pg as a short `user-error'."

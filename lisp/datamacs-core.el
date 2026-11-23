@@ -230,7 +230,11 @@ succeeds, and forgotten if FN fails."
                                       (setq found (car (apply #'auth-source-search
                                                               :max 1 :require '(:secret)
                                                               :create t query)))
-                                      (datamacs--secret found))))))
+                                      (or (datamacs--secret found)
+                                          (read-passwd
+                                           (format "Password for %s@%s: "
+                                                   (plist-get spec :user)
+                                                   (plist-get spec :host)))))))))
           (when-let* ((save (plist-get found :save-function)))
             (funcall save)
             ;; auth-source remembers that the first search found nothing.
