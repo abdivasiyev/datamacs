@@ -25,6 +25,7 @@
 (declare-function pg-exec "pg")
 (declare-function pg-result "pg")
 (declare-function pgcon-transaction-status "pg")
+(declare-function pgcon-client-encoding "pg")
 (declare-function pg-escape-identifier "pg")
 (declare-function pg-escape-literal "pg")
 
@@ -113,11 +114,14 @@ With :sslmode `prefer', fall back to a plain connection if TLS fails."
          (result (progn (datamacs-check-readonly conn query)
                         (datamacs-log-query conn query)
                         (datamacs-postgres--exec conn query)))
-         (columns (mapcar #'car (pg-result result :attributes))))
+         (columns (datamacs-postgres--decode
+                   conn (mapcar #'car (pg-result result :attributes)))))
     (if columns
         (let ((source (datamacs-postgres--source conn query columns)))
           (datamacs-table-result-create
-           :columns columns :rows (pg-result result :tuples)
+           :columns columns
+           :rows (mapcar (lambda (row) (datamacs-postgres--decode conn row))
+                         (pg-result result :tuples))
            :table (car source) :key (cdr source)))
       (let ((status (pg-result result :status)))
         (datamacs-affected-result-create
@@ -205,7 +209,18 @@ Partitions are listed under their table, not as tables."
 
 (defun datamacs-postgres--rows (conn query)
   "Return the rows of QUERY on CONN."
-  (pg-result (datamacs-postgres--exec conn query) :tuples))
+  (mapcar (lambda (row) (datamacs-postgres--decode conn row))
+          (pg-result (datamacs-postgres--exec conn query) :tuples)))
+
+(defun datamacs-postgres--decode (conn values)
+  "Decode the text in VALUES from the client encoding of CONN.
+pg returns raw bytes when its type conversion is off."
+  (let ((coding (or (pgcon-client-encoding (datamacs-conn-handle conn)) 'utf-8)))
+    (mapcar (lambda (v)
+              (if (and (stringp v) (not (multibyte-string-p v)))
+                  (decode-coding-string v coding)
+                v))
+            values)))
 
 (defun datamacs-postgres--tables (conn)
   "Return the schemas of CONN with their tables and columns."
