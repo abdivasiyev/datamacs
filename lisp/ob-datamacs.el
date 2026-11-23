@@ -44,11 +44,14 @@
   "Run BODY with Babel PARAMS and return the result for Org."
   (let* ((body (or (datamacs-babel--query) body))
          (spec (datamacs-babel--spec params))
-         (result (datamacs-call-with-connection
-                  spec (lambda (conn) (datamacs-driver-execute conn body)))))
+         (result (datamacs-call-with-progress
+                  (format "Running query on %s" (datamacs-describe spec))
+                  (lambda ()
+                    (datamacs-call-with-connection
+                     spec (lambda (conn) (datamacs-driver-execute conn body)))))))
     (if (seq-some (lambda (p) (member p '("none" "silent")))
                   (alist-get :result-params params))
-        (progn (datamacs-result-show result spec body) nil)
+        (progn (datamacs-result-show result spec body datamacs-progress-seconds) nil)
       (datamacs-result-render result))))
 
 (defun datamacs-babel--query ()

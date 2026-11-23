@@ -96,6 +96,7 @@ With :sslmode `prefer', fall back to a plain connection if TLS fails."
   "Run QUERY on the PostgreSQL connection CONN."
   (let* ((query (or (datamacs-sql-statement-at query 0) query))
          (result (progn (datamacs-check-readonly conn query)
+                        (datamacs-log-query conn query)
                         (datamacs-postgres--exec conn query)))
          (columns (mapcar #'car (pg-result result :attributes))))
     (if columns

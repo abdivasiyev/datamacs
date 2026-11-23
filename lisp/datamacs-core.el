@@ -28,6 +28,11 @@ Each element is a plist.  Every connection has its own :name and
   :type '(repeat plist)
   :group 'datamacs)
 
+(defcustom datamacs-log-queries t
+  "Non-nil means log every query sent to a server in *Messages*."
+  :type 'boolean
+  :group 'datamacs)
+
 (defcustom datamacs-connect-timeout 10
   "Seconds to wait for a database server to accept a connection."
   :type 'natnum
@@ -125,11 +130,59 @@ RET shows, or nil.")
 KEY is an alist of primary key columns and values.  Return the
 number of changed rows.")
 
+(defvar datamacs--progress-label nil
+  "What datamacs is waiting for, shown by the progress timer.")
+
+(defvar datamacs-progress-seconds 0
+  "Seconds the last `datamacs-call-with-progress' took.")
+
+(defun datamacs-call-with-progress (label fn)
+  "Call FN while showing LABEL and the seconds waited in the echo area.
+Return FN's value.  A nested call only changes the label shown."
+  (if datamacs--progress-label
+      (let ((datamacs--progress-label label))
+        (message "%s..." label)
+        (funcall fn))
+    (let* ((datamacs--progress-label label)
+           (start (float-time))
+           (timer (run-with-timer
+                   1 1 (lambda ()
+                         (message "%s... %ds" datamacs--progress-label
+                                  (round (- (float-time) start)))))))
+      (message "%s..." label)
+      (unwind-protect
+          (prog1 (funcall fn)
+            (setq datamacs-progress-seconds (- (float-time) start))
+            (message "%s...done (%.1fs)" label datamacs-progress-seconds))
+        (cancel-timer timer)))))
+
+(defun datamacs-log-query (conn query &optional values)
+  "Log QUERY with its parameter VALUES, sent on CONN, to *Messages*.
+It is not shown in the echo area."
+  (when datamacs-log-queries
+    (let ((inhibit-message t))
+      (message "datamacs: %s%s: %s%s"
+               (datamacs-describe (datamacs-conn-spec conn))
+               (if (datamacs-conn-readonly conn) " [read-only]" "")
+               (string-trim query)
+               (if values (format "  -- %S" values) "")))))
+
+(defun datamacs-describe (spec)
+  "Return the connection name of SPEC, with its database if any."
+  (if-let* ((db (plist-get spec :database)))
+      (format "%s (%s)" (plist-get spec :name) db)
+    (plist-get spec :name)))
+
 (defun datamacs-check-reachable (name host port)
   "Signal an error unless HOST accepts connections on PORT.
 NAME is the connection name shown while waiting.  Give up after
 `datamacs-connect-timeout' seconds; \\[keyboard-quit] stops earlier."
-  (message "Connecting to %s (%s:%s)..." name host port)
+  (datamacs-call-with-progress
+   (format "Connecting to %s (%s:%s)" name host port)
+   (lambda () (datamacs--wait-reachable host port))))
+
+(defun datamacs--wait-reachable (host port)
+  "Wait until HOST accepts connections on PORT, or signal an error."
   (let ((proc (condition-case err
                    (make-network-process :name "datamacs-check" :host host :service port
                                          :nowait t :noquery t)
@@ -142,7 +195,7 @@ NAME is the connection name shown while waiting.  Give up after
                       (< (float-time) deadline))
             (accept-process-output nil 0.1))
           (pcase (process-status proc)
-            ('open (message nil))
+            ('open t)
             ('connect (user-error "Cannot connect to %s:%s: no answer after %d seconds"
                                   host port datamacs-connect-timeout))
             (_ (user-error "Cannot connect to %s:%s: connection refused or unreachable"

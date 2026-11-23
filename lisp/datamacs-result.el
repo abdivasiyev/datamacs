@@ -65,8 +65,9 @@
                                  (window-list)))))
     (if slots (1+ (apply #'max slots)) 0)))
 
-(defun datamacs-result-show (result spec query)
-  "Show RESULT of QUERY on the SPEC connection in a side window."
+(defun datamacs-result-show (result spec query &optional seconds)
+  "Show RESULT of QUERY on the SPEC connection in a side window.
+SECONDS is how long the query took."
   (let* ((query (string-trim query))
          (buffer (datamacs-result--buffer spec query)))
     (with-current-buffer buffer
@@ -81,27 +82,31 @@
                              (side . bottom)
                              (slot . ,(datamacs-result--next-slot))
                              (window-height . 0.3)))
-    (datamacs-result--summary result)))
+    (datamacs-result--summary result seconds)))
 
 (defun datamacs-result--refresh (&rest _)
   "Run the query again on a read-only connection and show the new result."
   (unless (datamacs-table-result-p datamacs-result--result)
     (user-error "Only query results can be refreshed"))
-  (let ((result (datamacs-call-with-connection
-                 (datamacs-readonly-spec datamacs-result--spec)
-                 (lambda (conn)
-                   (datamacs-driver-execute conn datamacs-result--query)))))
+  (let ((result (datamacs-call-with-progress
+                 (format "Refreshing query on %s" (datamacs-describe datamacs-result--spec))
+                 (lambda ()
+                   (datamacs-call-with-connection
+                    (datamacs-readonly-spec datamacs-result--spec)
+                    (lambda (conn)
+                      (datamacs-driver-execute conn datamacs-result--query)))))))
     (setq datamacs-result--result result)
     (datamacs-result--redisplay)
-    (datamacs-result--summary result)))
+    (datamacs-result--summary result datamacs-progress-seconds)))
 
-(defun datamacs-result--summary (result)
-  "Show a one-line summary of RESULT in the echo area."
-  (let ((value (datamacs-result-render result)))
+(defun datamacs-result--summary (result &optional seconds)
+  "Show a one-line summary of RESULT, which took SECONDS, in the echo area."
+  (let ((value (datamacs-result-render result))
+        (time (if seconds (format " (%.1fs)" seconds) "")))
     (if (stringp value)
-        (message "%s" (car (split-string value "\n")))
+        (message "%s%s" (car (split-string value "\n")) time)
       (let ((n (length (or (cdr (memq 'hline value)) value))))
-        (message "%d row%s" n (if (= n 1) "" "s"))))))
+        (message "%d row%s%s" n (if (= n 1) "" "s") time)))))
 
 (defun datamacs-result--redisplay ()
   "Draw the result again, keeping point on the same cell."
@@ -151,16 +156,19 @@ With a prefix argument, set it to NULL."
            (key (mapcar (lambda (k)
                           (cons k (nth (cl-position k columns :test #'equal) row)))
                         (datamacs-table-result-key result))))
-      (when (zerop (datamacs-call-with-connection
-                    spec
-                    (lambda (conn)
-                      (datamacs-driver-update-cell
-                       conn (datamacs-table-result-table result)
-                       key column old new))))
+      (when (zerop (datamacs-call-with-progress
+                    (format "Updating %s.%s on %s" (datamacs-table-result-table result)
+                            column (datamacs-describe spec))
+                    (lambda ()
+                      (datamacs-call-with-connection
+                       spec
+                       (lambda (conn)
+                         (datamacs-driver-update-cell
+                          conn (datamacs-table-result-table result)
+                          key column old new))))))
         (user-error "Not updated: the row was changed or removed"))
       (setf (nth (cdr cell) row) new)
-      (datamacs-result--redisplay)
-      (message "Updated %s" column))))
+      (datamacs-result--redisplay))))
 
 (cl-defgeneric datamacs-result-render (result)
   "Convert RESULT into a value Org can insert.")

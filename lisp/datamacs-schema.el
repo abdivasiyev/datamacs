@@ -32,23 +32,28 @@
   "Return (TIME . SCHEMA) of the SPEC database from the cache.
 Read it from the database if it is not cached or RELOAD is non-nil."
   (datamacs-schema--cache (datamacs-schema--key spec) reload
-                          spec #'datamacs-driver-schema))
+                          spec #'datamacs-driver-schema
+                          (format "Reading schema of %s" (datamacs-describe spec))))
 
 (defun datamacs-schema--databases (spec &optional reload)
   "Return (TIME . NAMES) of the databases on the SPEC server from the cache.
 Read them from the server if they are not cached or RELOAD is non-nil."
   (datamacs-schema--cache (datamacs-schema--server-key spec) reload
-                          spec #'datamacs-driver-databases))
+                          spec #'datamacs-driver-databases
+                          (format "Listing databases on %s" (plist-get spec :name))))
 
-(defun datamacs-schema--cache (key reload spec fetch)
+(defun datamacs-schema--cache (key reload spec fetch label)
   "Return (TIME . VALUE) cached under KEY.
 If it is missing or RELOAD is non-nil, call FETCH with a read-only
-connection for SPEC and cache the result."
+connection for SPEC, showing LABEL, and cache the result."
   (or (and (not reload)
            (assoc-default key (multisession-value datamacs-schema-cache)))
       (let ((entry (cons (format-time-string "%Y-%m-%d %H:%M")
-                         (datamacs-call-with-connection
-                          (datamacs-readonly-spec spec) fetch))))
+                         (datamacs-call-with-progress
+                          label
+                          (lambda ()
+                            (datamacs-call-with-connection
+                             (datamacs-readonly-spec spec) fetch))))))
         (setf (multisession-value datamacs-schema-cache)
               (cons (cons key entry)
                     (assoc-delete-all
@@ -232,9 +237,12 @@ With RELOAD, read them from the server instead of the cache."
                          (datamacs-schema--name (cdr table)))))
          (query (format "SELECT * FROM %s LIMIT 100" name)))
     (datamacs-result-show
-     (datamacs-call-with-connection
-      spec (lambda (conn) (datamacs-driver-execute conn query)))
-     spec query)))
+     (datamacs-call-with-progress
+      (format "Running query on %s" (datamacs-describe spec))
+      (lambda ()
+        (datamacs-call-with-connection
+         spec (lambda (conn) (datamacs-driver-execute conn query)))))
+     spec query datamacs-progress-seconds)))
 
 (defun datamacs-schema--name (name)
   "Return NAME, quoted if it is not a plain SQL identifier."

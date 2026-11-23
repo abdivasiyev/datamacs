@@ -51,6 +51,7 @@
       (user-error "Connection %s is closed" (datamacs-conn-name conn)))
     (setq query (or (datamacs-sql-statement-at query 0) query))
     (datamacs-check-readonly conn query)
+    (datamacs-log-query conn query)
     (if-let* ((columns (datamacs-sqlite--columns handle query)))
         ;; `sqlite-select' hides errors, so rows come from `sqlite-execute'.
         (let ((source (datamacs-sqlite--source handle query columns))
@@ -82,15 +83,15 @@
 (cl-defmethod datamacs-driver-update-cell
   ((conn datamacs-sqlite-conn) table key column old new)
   "Change COLUMN from OLD to NEW in the TABLE row matching KEY on CONN."
-  (let ((q #'datamacs-sqlite--quote))
-    (sqlite-execute
-     (datamacs-conn-handle conn)
-     (format "UPDATE %s SET %s = ? WHERE %s AND %s IS ?"
-             (funcall q table) (funcall q column)
-             (mapconcat (lambda (k) (concat (funcall q (car k)) " IS ?"))
-                        key " AND ")
-             (funcall q column))
-     (append (list new) (mapcar #'cdr key) (list old)))))
+  (let* ((q #'datamacs-sqlite--quote)
+         (sql (format "UPDATE %s SET %s = ? WHERE %s AND %s IS ?"
+                      (funcall q table) (funcall q column)
+                      (mapconcat (lambda (k) (concat (funcall q (car k)) " IS ?"))
+                                 key " AND ")
+                      (funcall q column)))
+         (values (append (list new) (mapcar #'cdr key) (list old))))
+    (datamacs-log-query conn sql values)
+    (sqlite-execute (datamacs-conn-handle conn) sql values)))
 
 (cl-defmethod datamacs-driver-schema ((conn datamacs-sqlite-conn))
   "Return the schema of the SQLite connection CONN."
