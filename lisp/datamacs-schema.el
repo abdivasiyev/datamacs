@@ -211,7 +211,17 @@ With RELOAD, read them from the server instead of the cache."
                   (if (nth 2 column)
                       (propertize "  PK" 'font-lock-face 'font-lock-keyword-face)
                     "")
-                  "\n"))))))
+                  "\n")))
+      (dolist (section (nth 3 table))
+        (insert "  " (propertize (car section) 'font-lock-face 'bold) "\n")
+        (let ((width (apply #'max 0 (mapcar (lambda (l) (length (car l))) (cdr section)))))
+          (dolist (line (cdr section))
+            (insert (propertize (concat "  " (if (zerop width)
+                                                  ""
+                                                (concat (string-pad (nth 0 line) width) "  "))
+                                        (nth 1 line))
+                                'datamacs-table (nth 2 line))
+                    "\n")))))))
 
 (defun datamacs-schema--preview (table)
   "Show the first rows of TABLE, a (SCHEMA . NAME) pair."

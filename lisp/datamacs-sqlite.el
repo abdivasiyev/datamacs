@@ -99,19 +99,48 @@
      (lambda (db)
        (let ((schema (datamacs-sqlite--quote (nth 1 db))))
          (cons (nth 1 db)
-               (mapcar
-                (lambda (table)
-                  (list (nth 0 table) (nth 1 table)
-                        (mapcar (lambda (c) (list (nth 1 c) (nth 2 c) (> (nth 5 c) 0)))
-                                (sqlite-select
-                                 handle (format "PRAGMA %s.table_info(%s)" schema
-                                                (datamacs-sqlite--quote (nth 0 table)))))))
-                (sqlite-select
-                 handle (format "SELECT name, type FROM %s.sqlite_master
+               (mapcar (lambda (row)
+                         (datamacs-sqlite--table handle schema (nth 0 row) (nth 1 row)))
+                       (sqlite-select
+                        handle (format "SELECT name, type FROM %s.sqlite_master
 WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%%'
 ORDER BY name" schema))))))
      (seq-remove (lambda (db) (equal (nth 1 db) "temp"))
                  (sqlite-select handle "PRAGMA database_list")))))
+
+(defun datamacs-sqlite--table (handle schema name type)
+  "Return the schema entry of NAME, a TYPE in SCHEMA, on HANDLE."
+  (let* ((pragma (lambda (what arg)
+                   (sqlite-select handle (format "PRAGMA %s.%s(%s)" schema what
+                                                 (datamacs-sqlite--quote arg)))))
+         (table (list name type
+                      (mapcar (lambda (c) (list (nth 1 c) (nth 2 c) (> (nth 5 c) 0)))
+                              (funcall pragma "table_info" name)))))
+    (dolist (fk (reverse (seq-group-by #'car (funcall pragma "foreign_key_list" name))))
+      (let* ((rows (cdr fk))
+             (row (car rows)))
+        (datamacs-table-add-line
+         table "Foreign keys"
+         (list ""
+               (concat (format "(%s) → %s" (mapconcat (lambda (r) (nth 3 r)) rows ", ") (nth 2 row))
+                       (if (nth 4 row)
+                           (format "(%s)" (mapconcat (lambda (r) (nth 4 r)) rows ", "))
+                         "")
+                       (if (equal (nth 6 row) "NO ACTION") "" (concat " ON DELETE " (nth 6 row)))
+                       (if (equal (nth 5 row) "NO ACTION") "" (concat " ON UPDATE " (nth 5 row))))
+               nil))))
+    (dolist (index (sort (funcall pragma "index_list" name)
+                         (lambda (a b) (string< (nth 1 a) (nth 1 b)))))
+      (datamacs-table-add-line
+       table "Indexes"
+       (list (nth 1 index)
+             (format "%s(%s)%s"
+                     (if (eql (nth 2 index) 1) "UNIQUE " "")
+                     (mapconcat (lambda (c) (or (nth 2 c) "expression"))
+                                (funcall pragma "index_info" (nth 1 index)) ", ")
+                     (if (eql (nth 4 index) 1) " partial" ""))
+             nil)))
+    table))
 
 (defun datamacs-sqlite--source (handle query columns)
   "Return (TABLE . KEY) if rows of QUERY on HANDLE can be edited.

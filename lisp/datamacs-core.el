@@ -89,8 +89,19 @@ Each element is a plist.  Every connection has its own :name and
 
 (cl-defgeneric datamacs-driver-schema (conn)
   "Return the schema of CONN as a list of (SCHEMA . TABLES).
-Each table is (NAME TYPE COLUMNS) and each column is (NAME TYPE KEY),
-where KEY is non-nil for primary key columns.")
+Each table is (NAME TYPE COLUMNS [SECTIONS]) and each column is
+\(NAME TYPE KEY), where KEY is non-nil for primary key columns.
+SECTIONS is an alist of (TITLE . LINES), such as indexes, and each
+line is (LABEL TEXT TARGET), where TARGET is a (SCHEMA . NAME) that
+RET shows, or nil.")
+
+(defun datamacs-table-add-line (table title line)
+  "Add LINE to the TITLE section of TABLE, a schema table entry."
+  (let ((section (assoc title (nth 3 table))))
+    (cond (section (setcdr section (append (cdr section) (list line))))
+          ((nthcdr 3 table)
+           (setcar (nthcdr 3 table) (append (nth 3 table) (list (list title line)))))
+          (t (nconc table (list (list (list title line))))))))
 
 (cl-defgeneric datamacs-driver-multi-database-p (driver)
   "Return non-nil if DRIVER servers hold several databases.")

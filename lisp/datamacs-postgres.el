@@ -135,11 +135,29 @@ FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname")
                            :tuples)))
 
 (cl-defmethod datamacs-driver-schema ((conn datamacs-postgres-conn))
-  "Return the schema of the PostgreSQL database of CONN."
+  "Return the schema of the PostgreSQL database of CONN.
+Partitions are listed under their table, not as tables."
+  (let ((schemas (datamacs-postgres--tables conn))
+        (tables (make-hash-table :test #'equal)))
+    (dolist (s schemas)
+      (dolist (table (cdr s))
+        (puthash (cons (car s) (car table)) table tables)))
+    (datamacs-postgres--add-partitions conn tables)
+    (datamacs-postgres--add-constraints conn tables)
+    (datamacs-postgres--add-indexes conn tables)
+    schemas))
+
+(defun datamacs-postgres--rows (conn query)
+  "Return the rows of QUERY on CONN."
+  (pg-result (datamacs-postgres--exec conn query) :tuples))
+
+(defun datamacs-postgres--tables (conn)
+  "Return the schemas of CONN with their tables and columns."
   (let (schemas)
-    (dolist (row (pg-result (datamacs-postgres--exec conn "SELECT n.nspname, c.relname,
+    (dolist (row (datamacs-postgres--rows conn "SELECT n.nspname, c.relname,
        CASE c.relkind WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view'
-                      WHEN 'f' THEN 'foreign table' ELSE 'table' END,
+                      WHEN 'f' THEN 'foreign table' WHEN 'p' THEN 'partitioned table'
+                      ELSE 'table' END,
        a.attname, format_type(a.atttypid, a.atttypmod),
        EXISTS (SELECT 1 FROM pg_index i
                WHERE i.indrelid = c.oid AND i.indisprimary
@@ -147,11 +165,10 @@ FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname")
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND NOT c.relispartition
   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
   AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%'
-ORDER BY n.nspname, c.relname, a.attnum")
-                            :tuples))
+ORDER BY n.nspname, c.relname, a.attnum"))
       (pcase-let* ((`(,schema ,table ,type ,column ,ctype ,key) row)
                    (s (or (assoc schema schemas)
                           (car (push (list schema) schemas))))
@@ -163,6 +180,77 @@ ORDER BY n.nspname, c.relname, a.attnum")
                     (mapcar (lambda (tb) (list (nth 0 tb) (nth 1 tb) (reverse (nth 2 tb))))
                             (reverse (cdr s)))))
             (reverse schemas))))
+
+(defun datamacs-postgres--add-partitions (conn tables)
+  "Add the partition key and partitions of the TABLES of CONN."
+  (let ((children (make-hash-table :test #'equal)))
+    (dolist (row (datamacs-postgres--rows conn "SELECT pn.nspname, p.relname, cn.nspname, c.relname,
+       pg_get_expr(c.relpartbound, c.oid), c.relkind = 'p', pg_get_partkeydef(p.oid)
+FROM pg_inherits i
+JOIN pg_class c ON c.oid = i.inhrelid AND c.relispartition
+JOIN pg_class p ON p.oid = i.inhparent
+JOIN pg_namespace pn ON pn.oid = p.relnamespace
+JOIN pg_namespace cn ON cn.oid = c.relnamespace
+ORDER BY 1, 2, 4"))
+      (push row (gethash (cons (nth 0 row) (nth 1 row)) children)))
+    (maphash (lambda (key table)
+               (when-let* ((rows (gethash key children)))
+                 (datamacs-table-add-line table "Partitioned by" (list "" (nth 6 (car rows)) nil))
+                 (datamacs-postgres--add-partition-lines table children key 0)))
+             tables)))
+
+(defun datamacs-postgres--add-partition-lines (table children key depth)
+  "Add the partitions of KEY to TABLE, indented by DEPTH, from CHILDREN."
+  (dolist (row (reverse (gethash key children)))
+    (let ((child (cons (nth 2 row) (nth 3 row))))
+      (datamacs-table-add-line
+       table "Partitions"
+       (list (concat (make-string (* 2 depth) ?\s) (nth 3 row))
+             (concat (nth 4 row) (if (equal (nth 5 row) "t") " · partitioned" ""))
+             child))
+      (datamacs-postgres--add-partition-lines table children child (1+ depth)))))
+
+(defun datamacs-postgres--add-constraints (conn tables)
+  "Add the foreign keys and other constraints of the TABLES of CONN."
+  (let ((rows (datamacs-postgres--rows conn "SELECT n.nspname, c.relname, con.conname,
+       con.contype, pg_get_constraintdef(con.oid)
+FROM pg_constraint con
+JOIN pg_class c ON c.oid = con.conrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE con.contype IN ('f', 'p', 'u', 'c', 'x')
+ORDER BY 1, 2, 3")))
+    (dolist (foreign '(t nil))
+      (dolist (row rows)
+        (when-let* ((table (gethash (cons (nth 0 row) (nth 1 row)) tables)))
+          (when (eq foreign (equal (nth 3 row) "f"))
+            (datamacs-table-add-line
+             table (if foreign "Foreign keys" "Constraints")
+             (list (nth 2 row)
+                   (if foreign
+                       (string-replace " REFERENCES " " → "
+                                       (string-remove-prefix "FOREIGN KEY " (nth 4 row)))
+                     (nth 4 row))
+                   nil))))))))
+
+(defun datamacs-postgres--add-indexes (conn tables)
+  "Add the indexes of the TABLES of CONN."
+  (dolist (row (datamacs-postgres--rows conn "SELECT n.nspname, t.relname, i.relname,
+       x.indisunique, pg_get_indexdef(x.indexrelid)
+FROM pg_index x
+JOIN pg_class i ON i.oid = x.indexrelid
+JOIN pg_class t ON t.oid = x.indrelid
+JOIN pg_namespace n ON n.oid = t.relnamespace
+ORDER BY 1, 2, 3"))
+    (when-let* ((table (gethash (cons (nth 0 row) (nth 1 row)) tables)))
+      (let ((def (nth 4 row)))
+        (datamacs-table-add-line
+         table "Indexes"
+         (list (nth 2 row)
+               (concat (if (equal (nth 3 row) "t") "UNIQUE " "")
+                       (string-remove-prefix
+                        "btree "
+                        (if (string-match " USING \\(.*\\)\\'" def) (match-string 1 def) def)))
+               nil))))))
 
 (cl-defmethod datamacs-driver-in-transaction-p ((conn datamacs-postgres-conn))
   "Return non-nil if the PostgreSQL connection CONN has an open transaction."
