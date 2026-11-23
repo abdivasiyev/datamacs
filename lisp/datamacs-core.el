@@ -173,6 +173,26 @@ Return non-nil if there are none, or the user agrees."
 
 (add-hook 'kill-emacs-query-functions #'datamacs--confirm-sessions)
 
+(defun datamacs-check-readonly (conn query)
+  "Signal an error if CONN is read-only and QUERY does not only read.
+Reading queries start with SELECT, WITH, VALUES, TABLE, SHOW, or
+EXPLAIN without ANALYZE."
+  (when (and (datamacs-conn-readonly conn)
+             (not (with-temp-buffer
+                    (set-syntax-table sql-mode-syntax-table)
+                    (insert query)
+                    (goto-char (point-min))
+                    (forward-comment (buffer-size))
+                    (skip-chars-forward "( \t\n\r")
+                    (let ((case-fold-search t)
+                          (word (upcase (buffer-substring
+                                         (point)
+                                         (progn (skip-chars-forward "[:alpha:]") (point))))))
+                      (or (member word '("SELECT" "WITH" "VALUES" "TABLE" "SHOW"))
+                          (and (equal word "EXPLAIN")
+                               (not (string-match-p "\\banaly[sz]e\\b" query))))))))
+    (user-error "Read-only connection: only SELECT, WITH, VALUES, TABLE, SHOW and EXPLAIN can run")))
+
 (defun datamacs-sql-statement-at (text pos)
   "Return the SQL statement of TEXT at POS, counted from 0.
 Statements are separated by `;' outside strings, comments and

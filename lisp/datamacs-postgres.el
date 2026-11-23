@@ -23,6 +23,7 @@
 (declare-function pg-disconnect "pg")
 (declare-function pg-exec "pg")
 (declare-function pg-result "pg")
+(declare-function pgcon-transaction-status "pg")
 
 (cl-defstruct (datamacs-postgres-conn
                (:include datamacs-conn (driver 'postgres))
@@ -87,7 +88,8 @@ With :sslmode `prefer', fall back to a plain connection if TLS fails."
 (cl-defmethod datamacs-driver-execute ((conn datamacs-postgres-conn) query)
   "Run QUERY on the PostgreSQL connection CONN."
   (let* ((query (or (datamacs-sql-statement-at query 0) query))
-         (result (datamacs-postgres--exec conn query))
+         (result (progn (datamacs-check-readonly conn query)
+                        (datamacs-postgres--exec conn query)))
          (columns (mapcar #'car (pg-result result :attributes))))
     (if columns
         (datamacs-table-result-create
@@ -100,14 +102,24 @@ With :sslmode `prefer', fall back to a plain connection if TLS fails."
 
 (defun datamacs-postgres--exec (conn query)
   "Run QUERY on CONN and return the pg result.
-Values are kept as the text PostgreSQL sends."
+On a read-only connection QUERY runs in a READ ONLY transaction that
+is rolled back.  Values are kept as the text PostgreSQL sends."
   (let ((handle (datamacs-conn-handle conn))
         (pg-disable-type-coercion t))
     (unless handle
       (user-error "Connection %s is closed" (datamacs-conn-name conn)))
     (condition-case err
-        (pg-exec handle query)
+        (if (datamacs-conn-readonly conn)
+            (progn
+              (pg-exec handle "BEGIN READ ONLY")
+              (unwind-protect (pg-exec handle query)
+                (pg-exec handle "ROLLBACK")))
+          (pg-exec handle query))
       (error (datamacs-postgres--error err)))))
+
+(cl-defmethod datamacs-driver-in-transaction-p ((conn datamacs-postgres-conn))
+  "Return non-nil if the PostgreSQL connection CONN has an open transaction."
+  (memq (pgcon-transaction-status (datamacs-conn-handle conn)) '(?T ?E)))
 
 (defun datamacs-postgres--error (err)
   "Signal ERR from pg as a short `user-error'."
