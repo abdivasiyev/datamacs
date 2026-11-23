@@ -25,6 +25,8 @@
 (declare-function pg-exec "pg")
 (declare-function pg-result "pg")
 (declare-function pgcon-transaction-status "pg")
+(declare-function pg-escape-identifier "pg")
+(declare-function pg-escape-literal "pg")
 
 (cl-defstruct (datamacs-postgres-conn
                (:include datamacs-conn (driver 'postgres))
@@ -100,8 +102,10 @@ With :sslmode `prefer', fall back to a plain connection if TLS fails."
                         (datamacs-postgres--exec conn query)))
          (columns (mapcar #'car (pg-result result :attributes))))
     (if columns
-        (datamacs-table-result-create
-         :columns columns :rows (pg-result result :tuples))
+        (let ((source (datamacs-postgres--source conn query columns)))
+          (datamacs-table-result-create
+           :columns columns :rows (pg-result result :tuples)
+           :table (car source) :key (cdr source)))
       (let ((status (pg-result result :status)))
         (datamacs-affected-result-create
          :count (if (string-match "\\([0-9]+\\)\\'" status)
@@ -124,6 +128,44 @@ is rolled back.  Values are kept as the text PostgreSQL sends."
                 (pg-exec handle "ROLLBACK")))
           (pg-exec handle query))
       (error (datamacs-postgres--error err)))))
+
+(defun datamacs-postgres--source (conn query columns)
+  "Return (TABLE . KEY) if rows of QUERY on CONN can be edited.
+Only a plain SELECT from one table whose COLUMNS include the
+primary key qualifies."
+  (when-let* ((table (datamacs-sql-single-table query))
+              (key (mapcar #'car (datamacs-postgres--rows conn (format "SELECT a.attname
+FROM pg_index i
+JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
+WHERE i.indrelid = to_regclass(%s) AND i.indisprimary
+ORDER BY array_position(i.indkey::int2[], a.attnum)" (pg-escape-literal table))))))
+    (when (seq-every-p (lambda (k) (member k columns)) key)
+      (cons table key))))
+
+(cl-defmethod datamacs-driver-update-cell
+  ((conn datamacs-postgres-conn) table key column old new)
+  "Change COLUMN from OLD to NEW in the TABLE row matching KEY on CONN.
+Values are compared as the text PostgreSQL shows."
+  (let* ((literal (lambda (v) (if v (pg-escape-literal (format "%s" v)) "NULL")))
+         (col (pg-escape-identifier column))
+         ;; format() gives the text PostgreSQL shows, unlike ::text for booleans.
+         (shown (format "format('%%s', %s)" col))
+         (sql (format "UPDATE %s SET %s = %s WHERE %s AND %s RETURNING %s"
+                      (mapconcat (lambda (part) (pg-escape-identifier (downcase part)))
+                                 (split-string table "\\.") ".")
+                      col (funcall literal new)
+                      (mapconcat (lambda (k)
+                                   (format "%s = %s" (pg-escape-identifier (car k))
+                                           (funcall literal (cdr k))))
+                                 key " AND ")
+                      (if old
+                          (format "%s = %s" shown (funcall literal old))
+                        (format "%s IS NULL" col))
+                      shown))
+         (rows (progn (datamacs-log-query conn sql)
+                      (datamacs-postgres--rows conn sql))))
+    (when rows
+      (list (and new (caar rows))))))
 
 (cl-defmethod datamacs-driver-multi-database-p ((_driver (eql 'postgres)))
   "PostgreSQL servers hold several databases."

@@ -127,8 +127,8 @@ RET shows, or nil.")
 
 (cl-defgeneric datamacs-driver-update-cell (conn table key column old new)
   "Change COLUMN from OLD to NEW in the TABLE row matching KEY on CONN.
-KEY is an alist of primary key columns and values.  Return the
-number of changed rows.")
+KEY is an alist of primary key columns and values.  Return a list
+of the value now stored, or nil if no row had OLD.")
 
 (defvar datamacs--progress-label nil
   "What datamacs is waiting for, shown by the progress timer.")
@@ -309,6 +309,15 @@ EXPLAIN without ANALYZE."
                           (and (equal word "EXPLAIN")
                                (not (string-match-p "\\banaly[sz]e\\b" query))))))))
     (user-error "Read-only connection: only SELECT, WITH, VALUES, TABLE, SHOW and EXPLAIN can run")))
+
+(defun datamacs-sql-single-table (query)
+  "Return the source table of QUERY if it is a plain one-table SELECT.
+The name may include a schema, as in sales.orders."
+  (let ((case-fold-search t)
+        (sql (string-trim (replace-regexp-in-string "[ \t\n]+" " " query))))
+    (and (string-match "\\`select .+? from \\([[:alnum:]_]+\\(?:\\.[[:alnum:]_]+\\)?\\)\\(?: \\(?:where\\|order\\|limit\\) .*\\)?;?\\'" sql)
+         (not (string-match-p "\\_<\\(?:join\\|group\\|having\\|union\\|intersect\\|except\\|distinct\\)\\_>" sql))
+         (match-string 1 sql))))
 
 (defun datamacs-sql-statement-at (text pos)
   "Return the SQL statement of TEXT at POS, counted from 0.

@@ -156,18 +156,18 @@ With a prefix argument, set it to NULL."
            (key (mapcar (lambda (k)
                           (cons k (nth (cl-position k columns :test #'equal) row)))
                         (datamacs-table-result-key result))))
-      (when (zerop (datamacs-call-with-progress
-                    (format "Updating %s.%s on %s" (datamacs-table-result-table result)
-                            column (datamacs-describe spec))
-                    (lambda ()
-                      (datamacs-call-with-connection
-                       spec
-                       (lambda (conn)
-                         (datamacs-driver-update-cell
-                          conn (datamacs-table-result-table result)
-                          key column old new))))))
-        (user-error "Not updated: the row was changed or removed"))
-      (setf (nth (cdr cell) row) new)
+      (setf (nth (cdr cell) row)
+            (car (or (datamacs-call-with-progress
+                      (format "Updating %s.%s on %s" (datamacs-table-result-table result)
+                              column (datamacs-describe spec))
+                      (lambda ()
+                        (datamacs-call-with-connection
+                         spec
+                         (lambda (conn)
+                           (datamacs-driver-update-cell
+                            conn (datamacs-table-result-table result)
+                            key column old new)))))
+                     (user-error "Not updated: the row was changed or removed"))))
       (datamacs-result--redisplay))))
 
 (cl-defgeneric datamacs-result-render (result)

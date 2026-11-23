@@ -91,7 +91,8 @@
                       (funcall q column)))
          (values (append (list new) (mapcar #'cdr key) (list old))))
     (datamacs-log-query conn sql values)
-    (sqlite-execute (datamacs-conn-handle conn) sql values)))
+    (unless (zerop (sqlite-execute (datamacs-conn-handle conn) sql values))
+      (list new))))
 
 (cl-defmethod datamacs-driver-schema ((conn datamacs-sqlite-conn))
   "Return the schema of the SQLite connection CONN."
@@ -147,12 +148,9 @@ ORDER BY name" schema))))))
   "Return (TABLE . KEY) if rows of QUERY on HANDLE can be edited.
 Only a plain SELECT from one table whose COLUMNS include the
 primary key qualifies."
-  (let ((case-fold-search t)
-        (sql (string-trim (replace-regexp-in-string "[ \t\n]+" " " query))))
-    (when (and (string-match "\\`select .+? from \\([[:alnum:]_]+\\)\\(?: \\(?:where\\|order\\|limit\\) .*\\)?;?\\'" sql)
-               (not (string-match-p "\\_<\\(?:join\\|group\\|having\\|union\\|intersect\\|except\\|distinct\\)\\_>" sql)))
-      (let* ((table (match-string 1 sql))
-             (info (sqlite-select handle (format "PRAGMA table_info(%s)"
+  (when-let* ((table (datamacs-sql-single-table query)))
+    (unless (string-search "." table)
+      (let* ((info (sqlite-select handle (format "PRAGMA table_info(%s)"
                                                  (datamacs-sqlite--quote table))))
              (key (mapcar #'cadr (sort (seq-filter (lambda (c) (> (nth 5 c) 0)) info)
                                        (lambda (a b) (< (nth 5 a) (nth 5 b)))))))
