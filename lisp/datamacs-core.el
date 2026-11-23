@@ -87,6 +87,16 @@ Each element is a plist.  Every connection has its own :name and
 Each table is (NAME TYPE COLUMNS) and each column is (NAME TYPE KEY),
 where KEY is non-nil for primary key columns.")
 
+(cl-defgeneric datamacs-driver-multi-database-p (driver)
+  "Return non-nil if DRIVER servers hold several databases.")
+
+(cl-defmethod datamacs-driver-multi-database-p (_driver)
+  "Assume one database per connection."
+  nil)
+
+(cl-defgeneric datamacs-driver-databases (conn)
+  "Return the names of the databases on the server of CONN.")
+
 (cl-defgeneric datamacs-driver-in-transaction-p (conn)
   "Return non-nil if CONN has an open transaction.")
 

@@ -117,6 +117,46 @@ is rolled back.  Values are kept as the text PostgreSQL sends."
           (pg-exec handle query))
       (error (datamacs-postgres--error err)))))
 
+(cl-defmethod datamacs-driver-multi-database-p ((_driver (eql 'postgres)))
+  "PostgreSQL servers hold several databases."
+  t)
+
+(cl-defmethod datamacs-driver-databases ((conn datamacs-postgres-conn))
+  "Return the databases on the server of CONN that accept connections."
+  (mapcar #'car (pg-result (datamacs-postgres--exec conn "SELECT datname
+FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname")
+                           :tuples)))
+
+(cl-defmethod datamacs-driver-schema ((conn datamacs-postgres-conn))
+  "Return the schema of the PostgreSQL database of CONN."
+  (let (schemas)
+    (dolist (row (pg-result (datamacs-postgres--exec conn "SELECT n.nspname, c.relname,
+       CASE c.relkind WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view'
+                      WHEN 'f' THEN 'foreign table' ELSE 'table' END,
+       a.attname, format_type(a.atttypid, a.atttypmod),
+       EXISTS (SELECT 1 FROM pg_index i
+               WHERE i.indrelid = c.oid AND i.indisprimary
+                 AND a.attnum = ANY (i.indkey))
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%'
+ORDER BY n.nspname, c.relname, a.attnum")
+                            :tuples))
+      (pcase-let* ((`(,schema ,table ,type ,column ,ctype ,key) row)
+                   (s (or (assoc schema schemas)
+                          (car (push (list schema) schemas))))
+                   (tb (or (assoc table (cdr s))
+                           (car (setcdr s (cons (list table type nil) (cdr s)))))))
+        (setcar (nthcdr 2 tb) (cons (list column ctype (equal key "t")) (nth 2 tb)))))
+    (mapcar (lambda (s)
+              (cons (car s)
+                    (mapcar (lambda (tb) (list (nth 0 tb) (nth 1 tb) (reverse (nth 2 tb))))
+                            (reverse (cdr s)))))
+            (reverse schemas))))
+
 (cl-defmethod datamacs-driver-in-transaction-p ((conn datamacs-postgres-conn))
   "Return non-nil if the PostgreSQL connection CONN has an open transaction."
   (memq (pgcon-transaction-status (datamacs-conn-handle conn)) '(?T ?E)))
