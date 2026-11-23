@@ -19,6 +19,7 @@
 (require 'datamacs-core)
 
 (defvar pg-disable-type-coercion)
+(defvar pg-connect-timeout)
 (declare-function pg-connect-plist "pg")
 (declare-function pg-disconnect "pg")
 (declare-function pg-exec "pg")
@@ -34,6 +35,9 @@
   "Open the PostgreSQL connection described by SPEC."
   (unless (require 'pg nil t)
     (user-error "PostgreSQL needs the pg package from MELPA"))
+  (datamacs-check-reachable (plist-get spec :name)
+                            (or (plist-get spec :host) "localhost")
+                            (or (plist-get spec :port) 5432))
   (let ((handle
          (condition-case err
              (datamacs-call-with-password
@@ -43,7 +47,8 @@
                 (condition-case err
                     (datamacs-postgres--connect spec (or (funcall password) ""))
                   (pg-invalid-password
-                   (if (string-match-p "SQLSTATE=28P01" (format "%s" (cadr err)))
+                   (if (string-match-p "SQLSTATE=28P01\\|password authentication failed"
+                                       (format "%s" (cadr err)))
                        (datamacs-postgres--connect spec (funcall password t))
                      (signal (car err) (cdr err)))))))
            (error (datamacs-postgres--error err)))))
@@ -61,7 +66,8 @@ With :sslmode `prefer', fall back to a plain connection if TLS fails."
          (port (plist-get spec :port))
          (sslmode (format "%s" (or (plist-get spec :sslmode) "prefer")))
          (connect (lambda (tls)
-                    (let ((pg-disable-type-coercion t))
+                    (let ((pg-disable-type-coercion t)
+                          (pg-connect-timeout datamacs-connect-timeout))
                       (pg-connect-plist (or (plist-get spec :database) user) user
                                         :password password
                                         :host (or (plist-get spec :host) "localhost")
@@ -74,7 +80,8 @@ With :sslmode `prefer', fall back to a plain connection if TLS fails."
       ("require" (funcall connect t))
       ("prefer" (condition-case err
                     (funcall connect t)
-                  (pg-invalid-password (signal (car err) (cdr err)))
+                  ((pg-invalid-password pg-connect-timeout file-error)
+                   (signal (car err) (cdr err)))
                   (error (funcall connect nil))))
       (_ (user-error "Unknown :sslmode %s" sslmode)))))
 

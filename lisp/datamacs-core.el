@@ -28,6 +28,11 @@ Each element is a plist.  Every connection has its own :name and
   :type '(repeat plist)
   :group 'datamacs)
 
+(defcustom datamacs-connect-timeout 10
+  "Seconds to wait for a database server to accept a connection."
+  :type 'natnum
+  :group 'datamacs)
+
 ;;; Live connections
 
 (cl-defstruct (datamacs-conn (:constructor nil))
@@ -109,12 +114,37 @@ where KEY is non-nil for primary key columns.")
 KEY is an alist of primary key columns and values.  Return the
 number of changed rows.")
 
+(defun datamacs-check-reachable (name host port)
+  "Signal an error unless HOST accepts connections on PORT.
+NAME is the connection name shown while waiting.  Give up after
+`datamacs-connect-timeout' seconds; \\[keyboard-quit] stops earlier."
+  (message "Connecting to %s (%s:%s)..." name host port)
+  (let ((proc (condition-case err
+                   (make-network-process :name "datamacs-check" :host host :service port
+                                         :nowait t :noquery t)
+                 (error (user-error "Cannot connect to %s:%s: %s"
+                                    host port (error-message-string err)))))
+        (deadline (+ (float-time) datamacs-connect-timeout)))
+    (unwind-protect
+        (progn
+          (while (and (eq (process-status proc) 'connect)
+                      (< (float-time) deadline))
+            (accept-process-output nil 0.1))
+          (pcase (process-status proc)
+            ('open (message nil))
+            ('connect (user-error "Cannot connect to %s:%s: no answer after %d seconds"
+                                  host port datamacs-connect-timeout))
+            (_ (user-error "Cannot connect to %s:%s: connection refused or unreachable"
+                           host port))))
+      (delete-process proc))))
+
 (defun datamacs-call-with-password (spec fn)
   "Call FN with a password function for the SPEC connection.
 The function returns SPEC's :password or the password stored in
-auth-source, or nil.  Called with a non-nil argument, it asks the
-user when nothing is stored.  A typed password is offered for
-saving once FN succeeds, and forgotten if FN fails."
+auth-source, or nil.  Called with a non-nil argument after the
+server rejected that, it asks the user.  A password typed for a
+connection with nothing stored is offered for saving once FN
+succeeds, and forgotten if FN fails."
   (let ((query (seq-mapcat
                 (lambda (key)
                   (when-let* ((value (plist-get spec key)))
@@ -123,20 +153,33 @@ saving once FN succeeds, and forgotten if FN fails."
         found)
     (condition-case err
         (prog1 (funcall fn (lambda (&optional ask)
-                             (or (plist-get spec :password)
-                                 (let* ((entry (car (apply #'auth-source-search
-                                                           :max 1 :require '(:secret)
-                                                           :create (and ask t) query)))
-                                        (secret (plist-get entry :secret)))
-                                   (when ask
-                                     (setq found entry))
-                                   (if (functionp secret) (funcall secret) secret)))))
+                             (let ((stored (car (apply #'auth-source-search
+                                                       :max 1 :require '(:secret) query))))
+                               (cond ((not ask)
+                                      (or (plist-get spec :password)
+                                          (datamacs--secret stored)))
+                                     ((or stored (plist-get spec :password))
+                                      (read-passwd
+                                       (format "Password for %s@%s (the saved one was rejected): "
+                                               (plist-get spec :user) (plist-get spec :host))))
+                                     (t
+                                      (setq found (car (apply #'auth-source-search
+                                                              :max 1 :require '(:secret)
+                                                              :create t query)))
+                                      (datamacs--secret found))))))
           (when-let* ((save (plist-get found :save-function)))
-            (funcall save)))
+            (funcall save)
+            ;; auth-source remembers that the first search found nothing.
+            (apply #'auth-source-forget+ query)))
       (error
        (when found
          (apply #'auth-source-forget+ query))
        (signal (car err) (cdr err))))))
+
+(defun datamacs--secret (entry)
+  "Return the password of the auth-source ENTRY, or nil."
+  (let ((secret (plist-get entry :secret)))
+    (if (functionp secret) (funcall secret) secret)))
 
 (defvar datamacs--sessions (make-hash-table :test #'equal)
   "Open session connections, keyed by their spec.")
