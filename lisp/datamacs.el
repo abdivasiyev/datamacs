@@ -26,6 +26,7 @@
 
 (require 'datamacs-core)
 (require 'datamacs-sqlite)
+(require 'datamacs-postgres)
 (require 'datamacs-result)
 (require 'ob-datamacs)
 (require 'datamacs-schema)

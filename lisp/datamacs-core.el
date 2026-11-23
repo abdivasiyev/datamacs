@@ -100,27 +100,33 @@ KEY is an alist of primary key columns and values.  Return the
 number of changed rows.")
 
 (defun datamacs-call-with-password (spec fn)
-  "Call FN with the password of the SPEC connection and return its value.
-The password is SPEC's :password, or comes from auth-source, which
-asks for it when there is none.  A new password is offered for
+  "Call FN with a password function for the SPEC connection.
+The function returns SPEC's :password or the password stored in
+auth-source, or nil.  Called with a non-nil argument, it asks the
+user when nothing is stored.  A typed password is offered for
 saving once FN succeeds, and forgotten if FN fails."
-  (if-let* ((password (plist-get spec :password)))
-      (funcall fn password)
-    (let* ((query (seq-mapcat
-                   (lambda (key)
-                     (when-let* ((value (plist-get spec key)))
-                       (list key (format "%s" value))))
-                   '(:host :port :user)))
-           (found (car (apply #'auth-source-search
-                              :max 1 :require '(:secret) :create t query)))
-           (secret (plist-get found :secret)))
-      (condition-case err
-          (prog1 (funcall fn (if (functionp secret) (funcall secret) secret))
-            (when-let* ((save (plist-get found :save-function)))
-              (funcall save)))
-        (error
-         (apply #'auth-source-forget+ query)
-         (signal (car err) (cdr err)))))))
+  (let ((query (seq-mapcat
+                (lambda (key)
+                  (when-let* ((value (plist-get spec key)))
+                    (list key (format "%s" value))))
+                '(:host :port :user)))
+        found)
+    (condition-case err
+        (prog1 (funcall fn (lambda (&optional ask)
+                             (or (plist-get spec :password)
+                                 (let* ((entry (car (apply #'auth-source-search
+                                                           :max 1 :require '(:secret)
+                                                           :create (and ask t) query)))
+                                        (secret (plist-get entry :secret)))
+                                   (when ask
+                                     (setq found entry))
+                                   (if (functionp secret) (funcall secret) secret)))))
+          (when-let* ((save (plist-get found :save-function)))
+            (funcall save)))
+      (error
+       (when found
+         (apply #'auth-source-forget+ query))
+       (signal (car err) (cdr err))))))
 
 (defvar datamacs--sessions (make-hash-table :test #'equal)
   "Open session connections, keyed by their spec.")
@@ -169,24 +175,43 @@ Return non-nil if there are none, or the user agrees."
 
 (defun datamacs-sql-statement-at (text pos)
   "Return the SQL statement of TEXT at POS, counted from 0.
-Statements are separated by `;' outside strings and comments.  If
-POS is in an empty statement, return the one before it."
+Statements are separated by `;' outside strings, comments and
+PostgreSQL $$ quotes.  If POS is in an empty statement, return the
+one before it."
   (with-temp-buffer
     (set-syntax-table (make-syntax-table sql-mode-syntax-table))
     (modify-syntax-entry ?\" "\"")
+    (setq-local parse-sexp-lookup-properties t)
     (insert text)
     (goto-char (point-min))
     (let ((start 0) prev)
       (catch 'found
         (while t
-          (let* ((end (if (search-forward ";" nil t) (1- (point)) (length text)))
-                 (stmt (string-trim (substring text start end) nil "[ \t\n\r;]+")))
-            (unless (and (< end (length text)) (nth 8 (syntax-ppss)))
+          (let ((end (length text)))
+            (while (and (re-search-forward
+                         ";\\|\\$\\(?:[[:alpha:]_][[:alnum:]_]*\\)?\\$" nil t)
+                        (let ((match (match-string 0))
+                              (beg (match-beginning 0)))
+                          (cond ((nth 8 (save-excursion (syntax-ppss beg))) t)
+                                ((equal match ";") (setq end (1- (match-end 0))) nil)
+                                ((and (char-before beg)
+                                      (memq (char-syntax (char-before beg)) '(?w ?_)))
+                                 t)
+                                (t (datamacs-sql--mark-dollar-quote beg match) t)))))
+            (let ((stmt (string-trim (substring text start end) nil "[ \t\n\r;]+")))
               (when (<= pos end)
                 (throw 'found (if (string-empty-p stmt) prev stmt)))
               (unless (string-empty-p stmt)
                 (setq prev stmt))
               (setq start end))))))))
+
+(defun datamacs-sql--mark-dollar-quote (beg tag)
+  "Mark the $TAG$ quote starting at BEG as a string and move past it."
+  (let ((close (or (search-forward tag nil t) (point-max))))
+    (put-text-property beg (1+ beg) 'syntax-table (string-to-syntax "|"))
+    (put-text-property (1- close) close 'syntax-table (string-to-syntax "|"))
+    (syntax-ppss-flush-cache beg)
+    (goto-char close)))
 
 (provide 'datamacs-core)
 ;;; datamacs-core.el ends here

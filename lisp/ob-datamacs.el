@@ -87,8 +87,11 @@ Header arguments override the `:conn' connection, except that
     (let ((session (alist-get :session params)))
       (unless (member session '(nil "none"))
         (setq spec (plist-put spec :session session))))
-    (when-let* ((file (alist-get :file params)))
-      (setq spec (plist-put spec :file (expand-file-name file))))
+    (dolist (key '(:file :host :port :user :database :sslmode :password))
+      (when-let* ((value (alist-get key params)))
+        (setq spec (plist-put spec key (if (eq key :file)
+                                           (expand-file-name value)
+                                         value)))))
     (plist-put spec :readonly (or (plist-get conn :readonly)
                                   (equal (alist-get :readonly params) "t")))))
 
